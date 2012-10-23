@@ -9,6 +9,16 @@ def getfreelist():
 		freelist.append(filter(lambda x: len(x) > 2, s.split(' ')))
 	fp.close()
 	return freelist
+def gettable(fpath):
+	fp = open(fpath, 'rU')
+	ret = []
+	for s in fp.readlines():
+		s = s.rstrip('\r\n')
+		if len(s) == 0 or s[0] == '#': continue
+		cur = filter(lambda x: len(x) > 0, s.replace('\t', ' ').split(' '))
+		if len(cur) > 0: ret.append(cur)
+	fp.close()
+	return ret
 def getconf():
 	fp = open('proxy.conf', 'rU')
 	ret = []
@@ -21,7 +31,10 @@ def getconf():
 				ret.append(cur)
 				cur = dict()
 		pos = s.find('=')
-		if pos != -1: cur[s[0: pos]] = s[pos + 1: ]
+		if pos != -1:
+			tmp = s[pos + 1: ]
+			if tmp[0] == '%': tmp = gettable(tmp[1: ])
+			cur[s[0: pos]] = tmp
 	if len(cur) > 0: ret.append(cur)
 	fp.close()
 	return ret
@@ -115,8 +128,17 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		remote.settimeout(None)
 		return (remote, self.reply(remote, True))
 	def tcp_nat64(self, addr, port, conf):
+		addrtype = self.addrtype
+		if self.addrtype == 1:
+			for row in conf['nat64hosts']:
+				if row[1] == addr:
+					self.addrtype = 3
+					addr = row[0]
+					break
 		if self.addrtype != 3: raise ProxyException('addrtype not supported by this method')
-		return self.tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), port, conf)
+		res = self.tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), port, conf)
+		self.addrtype = addrtype
+		return res
 	def tcp_ipv4(self, addr, port, conf):
 		if self.addrtype == 4: raise ProxyException('addrtype not supported by this method')
 		remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -179,9 +201,6 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			elif self.addrtype == 4:	 # IPv6
 				data += self.recvall(sock, 16)
 				addr = socket.inet_ntop(socket.AF_INET6, data[4: ])
-			if addr == '94.249.139.5':
-				addr = 'intmainreturn0.vpsq.net'
-				self.addrtype = 3
 			port = struct.unpack('>H', self.recvall(sock, 2))[0]
 			try:
 				if mode == 1:  # 1. Tcp connect
