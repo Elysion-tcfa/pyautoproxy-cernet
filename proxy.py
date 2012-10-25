@@ -38,6 +38,27 @@ def getconf():
 	if len(cur) > 0: ret.append(cur)
 	fp.close()
 	return ret
+def match(regex, target):
+	regex = regex.split('.')
+	target = target.split('.')
+	tmp = 1
+	j = 1
+	l = len(regex)
+	while regex[j - 1] == '*':
+		tmp |= 1 << j
+		j += 1
+	for i in target:
+		tmp2 = 0
+		j = 0
+		while tmp > 0:
+			if tmp & 1:
+				if j > 0 and regex[j - 1] == '*': tmp2 |= 1 << j
+				if j < l and (regex[j] == '*' or regex[j] == '?' or regex[j] == i): tmp2 |= 1 << (j + 1)
+			j += 1
+			tmp >>= 1
+		tmp = tmp2
+		if tmp == 0: return False
+	return (tmp & (1 << l)) > 0
 
 class ProxyException(Exception):
 	def __init__(self, value):
@@ -63,7 +84,7 @@ def parsedns(domain, flag1, server, flag2, conf):
 	msg += reduce(lambda x, y: x + chr(len(y)) + y, ('.' + domain).split('.'))
 	msg += '\x00\x00' + ch + '\x00\x01'
 	msgr = None
-	for i in range(0,int(conf['dnsattempt'])):
+	for i in range(0, int(conf['dnsattempt'])):
 		sock.sendto(msg, (server, 53))
 		if select.select([sock], [], [], int(conf['dnstimeout']))[0]:
 			msgr = sock.recv(65536)
@@ -130,17 +151,24 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 	def tcp_nat64(self, addr, port, conf):
 		addrtype = self.addrtype
 		if self.addrtype == 1:
-			for row in conf['nat64hosts']:
-				if row[1] == addr:
-					self.addrtype = 3
-					addr = row[0]
-					break
+			try:
+				for row in conf['nat64hosts']:
+					if row[1] == addr:
+						self.addrtype = 3
+						addr = row[0]
+						break
+			except: pass
 		if self.addrtype != 3: raise ProxyException('addrtype not supported by this method')
 		res = self.tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), port, conf)
 		self.addrtype = addrtype
 		return res
 	def tcp_ipv4(self, addr, port, conf):
 		if self.addrtype == 4: raise ProxyException('addrtype not supported by this method')
+		if self.addrtype == 3:
+			try:
+				for fil in conf['domainfilter']:
+					if match(fil[0], addr): raise ProxyException('address filtered')
+			except: pass
 		remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		try:
 			remote.settimeout(int(conf['timeout']))
@@ -235,10 +263,12 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			if reply[1] == '\x00':  # Success
 				if mode == 1:  # 1. Tcp connect
 					self.handle_tcp(sock, remote)
+					remote.close()
 		except (socket.error, ProxyException):
 			print 'socket error'
+			remote.close()
 def main():
-	global fp
+	#global fp
 	#fp = open('report', 'w')
 	server = ThreadingTCPServer(('', 1080), Socks5Server)
 	try:
@@ -246,7 +276,7 @@ def main():
 	except KeyboardInterrupt:
 		server.shutdown()
 
-freelist = getfreelist()
+#freelist = getfreelist()
 config = getconf()
 if __name__ == '__main__':
 	main()
