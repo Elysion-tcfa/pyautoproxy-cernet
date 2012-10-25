@@ -144,7 +144,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		remote = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
 		try:
 			remote.settimeout(int(conf['timeout']))
-		except: pass
+		except StandardError: pass
 		remote.connect((addr, port))
 		remote.settimeout(None)
 		return (remote, self.reply(remote, True))
@@ -157,7 +157,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 						self.addrtype = 3
 						addr = row[0]
 						break
-			except: pass
+			except StandardError: pass
 		if self.addrtype != 3: raise ProxyException('addrtype not supported by this method')
 		res = self.tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), port, conf)
 		self.addrtype = addrtype
@@ -168,11 +168,11 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			try:
 				for fil in conf['domainfilter']:
 					if match(fil[0], addr): raise ProxyException('address filtered')
-			except: pass
+			except StandardError: pass
 		remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		try:
 			remote.settimeout(int(conf['timeout']))
-		except: pass
+		except StandardError: pass
 		remote.connect((addr, port))
 		remote.settimeout(None)
 		return (remote, self.reply(remote, False))
