@@ -150,6 +150,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 		return (remote, self.reply(remote, True))
 	def tcp_nat64(self, addr, port, conf):
 		addrtype = self.addrtype
+		if self.addrtype == 4: raise ProxyException('addrtype not supported by this method')
 		if self.addrtype == 1:
 			try:
 				for row in conf['nat64hosts']:
@@ -158,10 +159,22 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 						addr = row[0]
 						break
 			except StandardError: pass
-		if self.addrtype != 3: raise ProxyException('addrtype not supported by this method')
-		res = self.tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), port, conf)
-		self.addrtype = addrtype
-		return res
+		try:
+			if self.addrtype == 1: raise ProxyException('addrtype not supported by this method')
+			res = self.tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), port, conf)
+			self.addrtype = addrtype
+			return res
+		except (socket.error, ProxyException):
+			try:
+				if self.addrtype == 1: tmp = addr
+				else: tmp = parsedns(addr, False, conf['server'], True, conf)
+				tmp = socket.inet_pton(socket.AF_INET, tmp)
+				addr = conf['4to6prefix'] + ":%02x%02x:%02x%02x" % (ord(tmp[0]), ord(tmp[1]), ord(tmp[2]), ord(tmp[3]))
+				self.addrtype = 4
+				res = self.tcp_ipv6(addr, port, conf)
+				self.addrtype = addrtype
+				return res
+			except StandardError: raise ProxyException('StandardError detected')
 	def tcp_ipv4(self, addr, port, conf):
 		if self.addrtype == 4: raise ProxyException('addrtype not supported by this method')
 		if self.addrtype == 3:
@@ -276,6 +289,7 @@ def main():
 	except KeyboardInterrupt:
 		server.shutdown()
 
+os.chdir(os.path.dirname(os.path.abspath(sys.argv[0])))
 #freelist = getfreelist()
 config = getconf()
 if __name__ == '__main__':
