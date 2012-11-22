@@ -31,6 +31,9 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			elif addrtype == 4:
 				data += recvall(sock, 16)
 				addr = inet_ntop(socket.AF_INET6, data[4: ])
+			if addrtype == 4 and addr[0: 7] == '::ffff:':
+				addr = addr[7: ]
+				addrtype = 1
 			port = struct.unpack('>H', recvall(sock, 2))[0]
 			try:
 				if mode == 1:
