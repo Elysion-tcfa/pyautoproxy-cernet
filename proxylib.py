@@ -96,14 +96,6 @@ def tcp_ipv6(addr, addrtype, port, conf):
 	return (remote, reply(remote, True))
 def tcp_nat64(addr, addrtype, port, conf):
 	if addrtype == 4: raise ProxyException('addrtype not supported by this method')
-	if addrtype == 1:
-		try:
-			for row in conf['nat64hosts']:
-				if row[1] == addr:
-					addrtype = 3
-					addr = row[0]
-					break
-		except StandardError: pass
 	try:
 		if addrtype == 1: raise ProxyException('addrtype not supported by this method')
 		res = tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), 4, port, conf)
