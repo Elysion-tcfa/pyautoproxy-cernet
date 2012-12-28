@@ -12,7 +12,7 @@ def getconf():
 	fp = open('proxy.conf', 'rU')
 	ret = []
 	cur = dict()
-	for s in fp.readlines():
+	for s in fp.readlines() + ['type=nonsense']:
 		s = s.rstrip('\r\n')
 		if len(s) == 0 or s[0] == '#': continue
 		if s[0: 5] == 'type=':
@@ -24,7 +24,6 @@ def getconf():
 			tmp = s[pos + 1: ]
 			if tmp[0] == '%': tmp = gettable(tmp[1: ])
 			cur[s[0: pos]] = tmp
-	if len(cur) > 0: ret.append(cur)
 	fp.close()
 	return ret
 def match(regex, target):
@@ -48,3 +47,8 @@ def match(regex, target):
 		tmp = tmp2
 		if tmp == 0: return False
 	return (tmp & (1 << l)) > 0
+def filtered(addr, filterlist):
+	for fil in filterlist:
+		if match(fil[0], addr):
+			return True
+	return False

@@ -14,7 +14,7 @@ def inet_pton(af, ip):
 		if af == socket.AF_INET: return socket.inet_aton(ip)
 		else:
 			res = 'sakura~anatanideaeteyokatta'
-			if not winsock.inet_pton(af, ip, res): raise ProxyException('illegal ip address')
+			if not winsock.inet_pton(af, ip, res): raise socket.error('illegal ip address')
 			return res[0: 16]
 	else: return socket.inet_pton(af, ip)
 def inet_ntop(af, ip):
@@ -25,54 +25,77 @@ def inet_ntop(af, ip):
 			winsock.inet_ntop(af, ip, res, 40)
 			return res[0: res.find('\x00')]
 	else: return socket.inet_ntop(af, ip)
-def parsedns(domain, flag1, server, flag2, conf):
-	if flag2:
+def gethostbyname(af, addr, conf):
+	return socket.getaddrinfo(addr, 0, af, socket.SOCK_STREAM, socket.SOL_TCP)[0][4][0]
+def gethostbyname_extra(af, addr, conf):
+	try:
+		inet_pton(af, addr)
+		return addr
+	except socket.error: pass
+	try:
+		inet_pton(socket.AF_INET6, conf['server'])
 		sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-	else:
+	except socket.error:
 		sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-	if flag1:
+	if af == socket.AF_INET6:
 		ch = '\x1c'
 	else:
 		ch = '\x01'
 	msg = '\x05\x16\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'
-	msg += reduce(lambda x, y: x + chr(len(y)) + y, ('.' + domain).split('.'))
+	msg += reduce(lambda x, y: x + chr(len(y)) + y, ('.' + addr).split('.'))
 	msg += '\x00\x00' + ch + '\x00\x01'
 	msgr = None
-	for i in range(0, int(conf['dnsattempt'])):
-		sock.sendto(msg, (server, 53))
-		if select.select([sock], [], [], int(conf['dnstimeout']))[0]:
+	for i in range(0, int(conf['attempt'])):
+		if 'port' in conf:
+			sock.sendto(msg, (conf['server'], int(conf['port'])))
+		else:
+			sock.sendto(msg, (conf['server'], 53))
+		if select.select([sock], [], [], int(conf['timeout']))[0]:
 			msgr = sock.recv(65536)
 			break
 	sock.close()
-	if msgr == None: raise ProxyException('cannot connect to dns server')
-	if ord(msgr[3]) % 16 != 0: raise ProxyException('cannot get host')
+	if msgr == None: raise socket.error('cannot connect to dns server')
+	if ord(msgr[3]) % 16 != 0: raise socket.error('cannot get host')
 	num = struct.unpack('>H', msgr[6: 8])[0]
 	msgr = msgr[len(msg): ]
 	while num > 0:
 		pos = msgr.find('\x00')
 		if msgr[pos + 1] == ch:
-			if flag1:
-				return inet_ntop(socket.AF_INET6, msgr[pos + 10: pos + 26])
+			if af == socket.AF_INET6:
+				return inet_ntop(af, msgr[pos + 10: pos + 26])
 			else:
-				return inet_ntop(socket.AF_INET, msgr[pos + 10: pos + 14])
+				return inet_ntop(af, msgr[pos + 10: pos + 14])
 		else:
 			msgr = msgr[pos + 10 + ord(msgr[pos + 9]): ]
 		num -= 1
-	raise ProxyException('cannot get host')
+	raise socket.error('cannot get host')
 def recvall(sock, count):
 	data = ''
 	while len(data) < count:
 		d = sock.recv(count - len(data))
-		if not d: raise ProxyException('connection closed unexpectedly')
+		if not d: raise socket.error('connection closed unexpectedly')
 		data = data + d
 	return data
-def reply(remote, flag):
+def reply(af, remote):
 	local = remote.getsockname()
-	if flag:
+	if af == socket.AF_INET6:
 		return '\x05\x00\x00\x04' + inet_pton(socket.AF_INET6, local[0]) + struct.pack('>H', local[1])
 	else:
 		return '\x05\x00\x00\x01' + inet_pton(socket.AF_INET, local[0]) + struct.pack('>H', local[1])
 
+def tcp_connect(addr, port, conf):
+	try:
+		af = socket.AF_INET
+		inet_pton(af, addr)
+	except socket.error:
+		af = socket.AF_INET6
+	remote = socket.socket(af, socket.SOCK_STREAM)
+	try:
+		remote.settimeout(int(conf['timeout']))
+	except StandardError: pass
+	remote.connect((addr, port))
+	remote.settimeout(None)
+	return (af, remote)
 def handle_tcp(sock, remote):
 	fdset = [sock, remote]
 	while True:
@@ -85,65 +108,47 @@ def handle_tcp(sock, remote):
 			msg = remote.recv(4096)
 			time.sleep(0.0001)
 			if len(msg) == 0 or sock.sendall(msg) != None: break
-def tcp_ipv6(addr, addrtype, port, conf):
-	if addrtype == 1: raise ProxyException('addrtype not supported by this method')
-	remote = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-	try:
-		remote.settimeout(int(conf['timeout']))
-	except StandardError: pass
-	remote.connect((addr, port))
-	remote.settimeout(None)
-	return (remote, reply(remote, True))
-def tcp_nat64(addr, addrtype, port, conf):
-	if addrtype == 4: raise ProxyException('addrtype not supported by this method')
-	try:
-		if addrtype == 1: raise ProxyException('addrtype not supported by this method')
-		res = tcp_ipv6(parsedns(addr, True, conf['server'], True, conf), 4, port, conf)
-		return res
-	except (socket.error, ProxyException):
-		try:
-			if addrtype == 1: tmp = addr
-			else: tmp = parsedns(addr, False, conf['server'], True, conf)
-			tmp = inet_pton(socket.AF_INET, tmp)
-			addr = conf['4to6prefix'] + ":%02x%02x:%02x%02x" % (ord(tmp[0]), ord(tmp[1]), ord(tmp[2]), ord(tmp[3]))
-			res = tcp_ipv6(addr, 4, port, conf)
-			return res
-		except StandardError: raise ProxyException('StandardError detected')
-def tcp_ipv4(addr, addrtype, port, conf):
-	if addrtype == 4: raise ProxyException('addrtype not supported by this method')
-	if addrtype == 3:
-		try:
-			for fil in conf['domainfilter']:
-				if conflib.match(fil[0], addr): raise ProxyException('address filtered')
-		except StandardError: pass
-	remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	try:
-		remote.settimeout(int(conf['timeout']))
-	except StandardError: pass
-	remote.connect((addr, port))
-	remote.settimeout(None)
-	return (remote, reply(remote, False))
+
+def tcp_direct(addr, addrtype, port, conf):
+	(af, remote) = tcp_connect(addr, port, conf)
+	return (remote, reply(af, remote))
 def tcp_socks5(addr, addrtype, port, conf):
-	remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	remote.connect((conf['server'], int(conf['port'])))
+	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
 	remote.sendall('\x05\x00')
 	if recvall(remote, 2)[1] != '\x00': raise ProxyException('socks5 connection failed')
+	data = '\x05\x01\x00' + chr(addrtype)
+	if addrtype == 1: data += inet_pton(socket.AF_INET, addr)
+	elif addrtype == 3: data += chr(len(addr)) + addr
+	else: data += inet_pton(socket.AF_INET6, addr)
+	data += struct.pack('>H', port)
 	remote.sendall(data)
-	reply = remote.recv(4096)
-	if reply[1] != '\x00': raise ProxyException('socks5 connection failed')
-	return (remote, reply(remote, False))
+	if remote.recv(4096)[1] != '\x00': raise ProxyException('socks5 connection failed')
+	return (remote, reply(af, remote))
 def tcp_socks4(addr, addrtype, port, conf):
-	ip = socket.gethostbyname(addr)
-	remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	remote.connect((conf['server'], int(conf['port'])))
-	remote.sendall('\x04\x01' + struct.pack('>H', port) + inet_pton(socket.AF_INET, ip) + 'vani\x00')
+	if addrtype != 1: raise ProxyException('addrtype not supported by this method')
+	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
+	remote.sendall('\x04\x01' + struct.pack('>H', port) + inet_pton(socket.AF_INET, addr) + 'vani\x00')
 	if recvall(remote, 8)[1] != 'Z': raise ProxyException('socks4 connection failed')
-	return (remote, reply(remote, False))
+	return (remote, reply(af, remote))
 def tcp_http(addr, addrtype, port, conf):
-	remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	remote.connect((conf['server'], int(conf['port'])))
-	ip = socket.gethostbyname(addr)
-	remote.sendall('CONNECT ' + ip + ':' + str(port) + ' HTTP/1.1\r\n\r\n')
+	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
+	if addrtype == 4: addr = '[' + addr + ']'
+	remote.sendall('CONNECT ' + addr + ':' + str(port) + ' HTTP/1.1\r\n\r\n')
 	tmp = remote.recv(4096).split(' ')
 	if len(tmp) < 2 or tmp[1] != '200': raise ProxyException('http tunnel connection failed')
-	return (remote, reply(remote, False))
+	return (remote, reply(af, remote))
+
+def tcpdns_direct6(addr, conf):
+	return (socket.AF_INET6, gethostbyname(socket.AF_INET6, addr, conf))
+def tcpdns_direct4(addr, conf):
+	return (socket.AF_INET, gethostbyname(socket.AF_INET, addr, conf))
+def tcpdns_proxy6(addr, conf):
+	try:
+		return (socket.AF_INET6, gethostbyname_extra(socket.AF_INET6, addr, conf))
+	except socket.error:
+		raise ProxyException('dns_proxy6 failed')
+def tcpdns_proxy4(addr, conf):
+	try:
+		return (socket.AF_INET, gethostbyname_extra(socket.AF_INET, addr, conf))
+	except socket.error:
+		raise ProxyException('dns_proxy4 failed')

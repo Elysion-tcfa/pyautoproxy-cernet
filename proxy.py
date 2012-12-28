@@ -27,7 +27,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					try:
 						inet_pton(socket.AF_INET6, addr)
 						addrtype = 4
-					except (socket.error, ProxyException): pass
+					except socket.error: pass
 			elif addrtype == 4:
 				data += recvall(sock, 16)
 				addr = inet_ntop(socket.AF_INET6, data[4: ])
@@ -42,23 +42,34 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 				if mode == 1:
 					flag = False
 					for conf in config:
-						try:
-							if conf['type'] == 'ipv4':
-								(remote, reply) = tcp_ipv4(addr, addrtype, port, conf)
-							elif conf['type'] == 'ipv6':
-								(remote, reply) = tcp_ipv6(addr, addrtype, port, conf)
-							elif conf['type'] == 'nat64':
-								(remote, reply) = tcp_nat64(addr, addrtype, port, conf)
-							elif conf['type'] == 'http':
-								(remote, reply) = tcp_http(addr, addrtype, port, conf)
-							elif conf['type'] == 'socks4':
-								(remote, reply) = tcp_socks4(addr, addrtype, port, conf)
-							elif conf['type'] == 'socks5':
-								(remote, reply) = tcp_socks5(addr, addrtype, port, conf)
-							else: continue
-							flag = True
-							break
-						except (socket.error, ProxyException): pass
+						if not conf['type'] in ['direct', 'http', 'socks4', 'socks5']: continue
+						if 'domainaccept' in conf and not filtered(addr, conf['domainaccept']): continue
+						if 'domainexcept' in conf and filtered(addr, conf['domainexcept']): continue
+						if conf['type'] in ['direct', 'socks4'] or ('hostname' in conf and conf['hostname'] == '0'):
+							for dnsconf in config:
+								try:
+									if not dnsconf['type'] in ['dns_direct6', 'dns_direct4', 'dns_proxy6', 'dns_proxy4']: continue
+									if conf['type'] in ['socks4'] and not dnsconf['type'] in ['dns_direct4', 'dns_proxy4']: continue
+									if 'domainaccept' in dnsconf and not filtered(addr, dnsconf['domainaccept']): continue
+									if 'domainexcept' in dnsconf and filtered(addr, dnsconf['domainexcept']): continue
+									(af, ip) = eval('tcp' + dnsconf['type'])(addr, dnsconf)
+									if af == socket.AF_INET and '4to6' in dnsconf:
+										(af, ip) = (socket.AF_INET6, dnsconf['4to6'] + ':%02x%02x:%02x%02x' % tuple(map(ord, inet_pton(af, ip))))
+									if af == socket.AF_INET:
+										iptype = 1
+									else:
+										iptype = 4
+									(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
+									flag = True
+									break
+								except (socket.error, ProxyException): pass
+							if flag: break
+						else:
+							try:
+								(remote, reply) = eval('tcp_' + conf['type'])(addr, addrtype, port, conf)
+								flag = True
+								break
+							except (socket.error, ProxyException): pass
 					if not flag: raise ProxyException('cannot connect to host')
 					print 'Tcp connect to', addr, port
 				else:
