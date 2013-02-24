@@ -114,7 +114,7 @@ def tcp_direct(addr, addrtype, port, conf):
 	return (remote, reply(af, remote))
 def tcp_socks5(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
-	remote.sendall('\x05\x00')
+	remote.sendall('\x05\x01\x00')
 	if recvall(remote, 2)[1] != '\x00': raise ProxyException('socks5 connection failed')
 	data = '\x05\x01\x00' + chr(addrtype)
 	if addrtype == 1: data += inet_pton(socket.AF_INET, addr)

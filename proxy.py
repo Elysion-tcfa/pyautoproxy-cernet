@@ -1,10 +1,11 @@
-import socket, sys, select, SocketServer, struct, os
+import socket, sys, select, SocketServer, struct, os, time
 from proxylib import *
 from conflib import *
 
 class ThreadingTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer): pass
 class Socks5Server(SocketServer.StreamRequestHandler):
 	def handle(self):
+		global cnt
 		try:
 			print 'socks connection from ', self.client_address
 			sock = self.connection
@@ -41,13 +42,23 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			try:
 				if mode == 1:
 					flag = False
+					tport = port
+					if tport > 1024: tport = 1024
+					if (addr, tport) in cache and time.time() - cache[(addr, tport)][0] < 300:
+						method = cache[(addr, tport)]
+						try:
+							(remote, reply) = eval('tcp_' + method[1]['type'])(method[2], method[3], port, method[1])
+							flag = True
+						except (socket.error, ProxyException): pass
 					for conf in config:
+						if flag: break
 						if not conf['type'] in ['direct', 'http', 'socks4', 'socks5']: continue
 						if 'domainaccept' in conf and not filtered(addr, conf['domainaccept']): continue
 						if 'domainexcept' in conf and filtered(addr, conf['domainexcept']): continue
 						if conf['type'] in ['direct', 'socks4'] or ('hostname' in conf and conf['hostname'] == '0'):
 							for dnsconf in config:
 								try:
+									if flag: break
 									if not dnsconf['type'] in ['dns_direct6', 'dns_direct4', 'dns_proxy6', 'dns_proxy4']: continue
 									if conf['type'] in ['socks4'] and not dnsconf['type'] in ['dns_direct4', 'dns_proxy4']: continue
 									if 'domainaccept' in dnsconf and not filtered(addr, dnsconf['domainaccept']): continue
@@ -60,18 +71,23 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 									else:
 										iptype = 4
 									(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
+									cache[(addr, tport)] = (time.time(), conf, ip, iptype)
 									flag = True
-									break
 								except (socket.error, ProxyException): pass
-							if flag: break
 						else:
 							try:
 								(remote, reply) = eval('tcp_' + conf['type'])(addr, addrtype, port, conf)
+								cache[(addr, tport)] = (time.time(), conf, addr, addrtype)
 								flag = True
-								break
 							except (socket.error, ProxyException): pass
 					if not flag: raise ProxyException('cannot connect to host')
 					print 'Tcp connect to', addr, port
+					cnt += 1
+					if cnt == 200:
+						cnt = 0
+						ts = time.time()
+						for it in cache.items():
+							if ts - cache[it][0] > 300: del cache[it]
 				else:
 					reply = '\x05\x07\x00' + data[3]
 			except (socket.error, ProxyException):
@@ -94,5 +110,7 @@ def main():
 
 os.chdir(os.path.dirname(os.path.abspath(sys.argv[0])))
 config = getconf()
+cache = {}
+cnt = 0
 if __name__ == '__main__':
 	main()
