@@ -56,6 +56,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 						if 'domainaccept' in conf and not filtered(addr, conf['domainaccept']): continue
 						if 'domainexcept' in conf and filtered(addr, conf['domainexcept']): continue
 						if conf['type'] in ['direct', 'socks4'] or ('hostname' in conf and conf['hostname'] == '0'):
+							resolvelist = []
 							for dnsconf in config:
 								try:
 									if flag: break
@@ -65,14 +66,16 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 									if 'domainexcept' in dnsconf and filtered(addr, dnsconf['domainexcept']): continue
 									(af, ip) = eval('tcp' + dnsconf['type'])(addr, dnsconf)
 									if af == socket.AF_INET and '4to6' in dnsconf:
-										(af, ip) = (socket.AF_INET6, dnsconf['4to6'] + ':%02x%02x:%02x%02x' % tuple(map(ord, inet_pton(af, ip))))
+										(af, ip) = (socket.AF_INET6, dnsconf['4to6'] + ':' + ip)
 									if af == socket.AF_INET:
 										iptype = 1
 									else:
 										iptype = 4
-									(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
-									cache[(addr, tport)] = (time.time(), conf, ip, iptype)
-									flag = True
+									if not (ip, iptype) in resolvelist:
+										resolvelist.append((ip, iptype))
+										(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
+										cache[(addr, tport)] = (time.time(), conf, ip, iptype)
+										flag = True
 								except (socket.error, ProxyException): pass
 						else:
 							try:
