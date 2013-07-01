@@ -41,20 +41,25 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			port = struct.unpack('>H', recvall(sock, 2))[0]
 			try:
 				if mode == 1:
+					remotelist = []
 					flag = False
+					newtype = False
 					tport = port
 					if tport > 1024: tport = 1024
-					if (addr, tport) in cache and time.time() - cache[(addr, tport)][0] < 300:
+					if (addr, tport) in cache and time.time() - cache[(addr, tport)][1] < 300:
 						method = cache[(addr, tport)]
 						try:
-							(remote, reply) = eval('tcp_' + method[1]['type'])(method[2], method[3], port, method[1])
+							(remote, reply) = eval('tcp_' + method[0]['type'])(method[2], method[3], port, method[0])
+							remotelist = [[remote] + method]
 							flag = True
 						except (socket.error, ProxyException): pass
+					newtype = True
 					for conf in config:
 						if flag: break
-						if not conf['type'] in ['direct', 'http', 'socks4', 'socks5']: continue
+						if not conf['type'] in ['direct', 'http', 'http_tunnel', 'socks4', 'socks5']: continue
 						if 'domainaccept' in conf and not filtered(addr, conf['domainaccept']): continue
 						if 'domainexcept' in conf and filtered(addr, conf['domainexcept']): continue
+						if 'port' in conf and not portrange(port, conf['port']): continue
 						if conf['type'] in ['direct', 'socks4'] or ('hostname' in conf and conf['hostname'] == '0'):
 							resolvelist = []
 							for dnsconf in config:
@@ -74,23 +79,18 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 									if not (ip, iptype) in resolvelist:
 										resolvelist.append((ip, iptype))
 										(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
-										cache[(addr, tport)] = (time.time(), conf, ip, iptype)
+										remotelist.append([remote, conf, time.time(), ip, iptype])
 										flag = True
 								except (socket.error, ProxyException): pass
 						else:
 							try:
 								(remote, reply) = eval('tcp_' + conf['type'])(addr, addrtype, port, conf)
-								cache[(addr, tport)] = (time.time(), conf, addr, addrtype)
-								flag = True
+								remotelist.append([remote, conf, time.time(), addr, addrtype])
+								if conf['type'] != 'http':
+									flag = True
 							except (socket.error, ProxyException): pass
-					if not flag: raise ProxyException('cannot connect to host')
+					if remotelist == []: raise ProxyException('cannot connect to host')
 					print 'Tcp connect to', addr, port
-					cnt += 1
-					if cnt == 200:
-						cnt = 0
-						ts = time.time()
-						for it in cache.items():
-							if ts - cache[it][0] > 300: del cache[it]
 				else:
 					reply = '\x05\x07\x00' + data[3]
 			except (socket.error, ProxyException):
@@ -98,7 +98,16 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			sock.sendall(reply)
 			if reply[1] == '\x00':
 				if mode == 1:
-					handle_tcp(sock, remote)
+					try: conf, ts, addr, addrtype = handle_tcp(sock, remotelist)
+					except: raise socket.error
+					if newtype:
+						cache[(addr, tport)] = [conf, ts, addr, addrtype]
+					cnt += 1
+					if cnt == 200:
+						cnt = 0
+						ts = time.time()
+						for it in cache.items():
+							if ts - cache[it][0] > 300: del cache[it]
 					remote.close()
 		except (socket.error, ProxyException):
 			print 'socket error'

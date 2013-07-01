@@ -1,10 +1,10 @@
-import sys, socket, ctypes, select, struct, time, conflib
+import sys, socket, ctypes, select, struct, time, re, conflib
 windows = (sys.platform.startswith('win32') or sys.platform.startswith('cygwin'))
 if windows:
 	winsock = ctypes.WinDLL("ws2_32.dll")
 
 class ProxyException(Exception):
-	def __init__(self, value):
+	def __init__(self, value = ''):
 		self.value = value
 	def __str__(self):
 		return repr(self.value)
@@ -46,8 +46,8 @@ def gethostbyname_extra(af, addr, conf):
 	msg += '\x00\x00' + ch + '\x00\x01'
 	msgr = None
 	for i in range(0, int(conf['attempt'])):
-		if 'port' in conf:
-			sock.sendto(msg, (conf['server'], int(conf['port'])))
+		if 'serverport' in conf:
+			sock.sendto(msg, (conf['server'], int(conf['serverport'])))
 		else:
 			sock.sendto(msg, (conf['server'], 53))
 		if select.select([sock], [], [], int(conf['timeout']))[0]:
@@ -96,24 +96,100 @@ def tcp_connect(addr, port, conf):
 	remote.connect((addr, port))
 	remote.settimeout(None)
 	return (af, remote)
-def handle_tcp(sock, remote):
-	fdset = [sock, remote]
+def handle_tcp(sock, remotelist):
+	httpmode = False
+	remoteid = 0
+	for i in range(0, len(remotelist)):
+		if remotelist[i][1]['type'] == 'http':
+			remoteid = i
+			httpmode = True
+			nowclient = True
+			contentlen = -1
+			break
 	while True:
-		r, w, e = select.select(fdset, [], [])
+		r, w, e = select.select([sock, remotelist[remoteid][0]], [], [])
 		if sock in r:
-			msg = sock.recv(4096)
+			msg = sock.recv(8192)
+			if len(msg) == 0: break
+			if httpmode:
+				try:
+					if not nowclient: raise ProxyException()
+					if contentlen == -1:
+						header = re.match(r'(GET|HEAD|POST|PUT|DELETE|TRACE|OPTIONS|PATCH) ([^ ]*) HTTP/(1\.1|1\.0|0\.9)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
+						if header == None: raise ProxyException()
+						body = msg[len(header.group(0)): ]
+						header = header.groups()
+						headerdict = {}
+						for it in re.finditer(r'([A-Za-z0-9-]+): (.+)\r\n', header[3]):
+							headerdict[it.group(1)] = it.group(2)
+						if 'Host' not in headerdict: raise ProxyException()
+						if 'Content-Length' in headerdict:
+							contentlen = int(headerdict['Content-Length'])
+						else:
+							contentlen = 0
+						msg = '%s http://%s%s HTTP/%s\r\n%s\r\n%s' % (header[0], headerdict['Host'], header[1], header[2], header[3], body)
+					else:
+						body = msg
+					contentlen -= len(body)
+					if contentlen <= 0:
+						nowclient = False
+						contentlen = -1
+				except ProxyException:
+					remotelist[remoteid][0].close()
+					httpmode = False
+					remoteid = -1
+					for i in range(0, len(remotelist)):
+						if remotelist[i][1]['type'] != 'http':
+							remoteid = i
+							break
+					if remoteid == -1: break
 			time.sleep(0.0001)
-			if len(msg) == 0 or remote.sendall(msg) != None: break
-		if remote in r:
-			msg = remote.recv(4096)
+			if remotelist[remoteid][0].sendall(msg) != None: break
+		if remotelist[remoteid][0] in r:
+			msg = remotelist[remoteid][0].recv(8192)
+			if len(msg) == 0: break
+			if httpmode:
+				try:
+					if nowclient: raise ProxyException()
+					if contentlen == -1:
+						header = re.match(r'HTTP/(1\.1|1\.0|0\.9) \d{3}( [A-Za-z0-9-])*\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
+						if header == None: raise ProxyException()
+						body = msg[len(header.group(0)): ]
+						header = header.groups()
+						headerdict = {}
+						for it in re.finditer(r'([A-Za-z0-9-]+): (.+)\r\n', header[2]):
+							headerdict[it.group(1)] = it.group(2)
+						if 'Content-Length' in headerdict:
+							contentlen = int(headerdict['Content-Length'])
+						else:
+							contentlen = 0
+					else:
+						body = msg
+					contentlen -= len(body)
+					if contentlen <= 0:
+						nowclient = True
+						contentlen = -1
+				except ProxyException:
+					httpmode = False
+					remoteid = -1
+					for i in range(0, len(remotelist)):
+						if remotelist[i][1]['type'] != 'http':
+							remoteid = i
+							break
+					if remoteid == -1: break
 			time.sleep(0.0001)
-			if len(msg) == 0 or sock.sendall(msg) != None: break
+			if sock.sendall(msg) != None: break
+	for i in range(0, len(remotelist)):
+		if i != remoteid:
+			remotelist[i][0].close()
+	if remoteid == -1: return None
+	else: return remotelist[remoteid][1: ]
 
 def tcp_direct(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(addr, port, conf)
 	return (remote, reply(af, remote))
 def tcp_socks5(addr, addrtype, port, conf):
-	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
+	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
 	remote.sendall('\x05\x01\x00')
 	if recvall(remote, 2)[1] != '\x00': raise ProxyException('socks5 connection failed')
 	data = '\x05\x01\x00' + chr(addrtype)
@@ -126,16 +202,19 @@ def tcp_socks5(addr, addrtype, port, conf):
 	return (remote, reply(af, remote))
 def tcp_socks4(addr, addrtype, port, conf):
 	if addrtype != 1: raise ProxyException('addrtype not supported by this method')
-	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
+	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
 	remote.sendall('\x04\x01' + struct.pack('>H', port) + inet_pton(socket.AF_INET, addr) + 'vani\x00')
 	if recvall(remote, 8)[1] != 'Z': raise ProxyException('socks4 connection failed')
 	return (remote, reply(af, remote))
-def tcp_http(addr, addrtype, port, conf):
-	(af, remote) = tcp_connect(conf['server'], int(conf['port']), conf)
+def tcp_http_tunnel(addr, addrtype, port, conf):
+	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
 	if addrtype == 4: addr = '[' + addr + ']'
 	remote.sendall('CONNECT ' + addr + ':' + str(port) + ' HTTP/1.1\r\n\r\n')
 	tmp = remote.recv(4096).split(' ')
 	if len(tmp) < 2 or tmp[1] != '200': raise ProxyException('http tunnel connection failed')
+	return (remote, reply(af, remote))
+def tcp_http(addr, addrtype, port, conf):
+	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
 	return (remote, reply(af, remote))
 
 def tcpdns_direct6(addr, conf):

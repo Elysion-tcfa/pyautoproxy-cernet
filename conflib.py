@@ -1,3 +1,5 @@
+import re
+
 def gettable(fpath):
 	fp = open(fpath, 'rU')
 	ret = []
@@ -52,3 +54,9 @@ def filtered(addr, filterlist):
 		if match(fil[0], addr):
 			return True
 	return False
+def portrange(port, portconf):
+	if '-' in portconf:
+		start, end = re.match('^(\d+)-(\d+)$', portconf).groups()
+		return port >= int(start) and port <= int(end)
+	else:
+		return port == int(portconf)
