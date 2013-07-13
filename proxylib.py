@@ -152,7 +152,7 @@ def handle_tcp(sock, remotelist):
 				try:
 					if nowclient: raise ProxyException()
 					if contentlen == -1:
-						header = re.match(r'HTTP/(1\.1|1\.0|0\.9) \d{3}( [A-Za-z0-9-])*\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
+						header = re.match(r'HTTP/(1\.1|1\.0|0\.9) \d{3}( [A-Za-z0-9-]*)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
 						if header == None: raise ProxyException()
 						body = msg[len(header.group(0)): ]
 						header = header.groups()
