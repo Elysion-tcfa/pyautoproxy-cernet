@@ -6,6 +6,7 @@ class ThreadingTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer): p
 class Socks5Server(SocketServer.StreamRequestHandler):
 	def handle(self):
 		global cnt
+		global cache
 		try:
 			print 'socks connection from ', self.client_address
 			sock = self.connection
@@ -106,15 +107,17 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					if cnt == 200:
 						cnt = 0
 						ts = time.time()
-						for it in cache.items():
-							if ts - cache[it][0] > 300: del cache[it]
+						newcache = {}
+						for it in cache:
+							if ts - cache[it][1] <= 300: newcache[it] = cache[it]
+						cache = newcache
 					remote.close()
 		except (socket.error, ProxyException):
 			print 'socket error'
 			try: remote.close()
 			except: pass
 def main():
-	server = ThreadingTCPServer(('', 1080), Socks5Server)
+	server = ThreadingTCPServer(('127.0.0.1', 1080), Socks5Server)
 	try:
 		server.serve_forever()
 	except KeyboardInterrupt:
