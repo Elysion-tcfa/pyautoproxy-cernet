@@ -152,7 +152,7 @@ def handle_tcp(sock, remotelist):
 				try:
 					if nowclient: raise ProxyException()
 					if contentlen == -1:
-						header = re.match(r'HTTP/(1\.1|1\.0|0\.9) \d{3}( [A-Za-z0-9-]*)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
+						header = re.match(r'HTTP/(1\.1|1\.0|0\.9) \d{3}( [A-Za-z0-9-]*)?\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
 						if header == None: raise ProxyException()
 						body = msg[len(header.group(0)): ]
 						header = header.groups()
@@ -179,11 +179,6 @@ def handle_tcp(sock, remotelist):
 					if remoteid == -1: break
 			time.sleep(0.0001)
 			if sock.sendall(msg) != None: break
-	for i in range(0, len(remotelist)):
-		if i != remoteid:
-			remotelist[i][0].close()
-	if remoteid == -1: return None
-	else: return remotelist[remoteid][1: ]
 
 def tcp_direct(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(addr, port, conf)
@@ -198,13 +193,15 @@ def tcp_socks5(addr, addrtype, port, conf):
 	else: data += inet_pton(socket.AF_INET6, addr)
 	data += struct.pack('>H', port)
 	remote.sendall(data)
-	if remote.recv(4096)[1] != '\x00': raise ProxyException('socks5 connection failed')
+	msg = remote.recv(4096)
+	if len(msg) < 2 or msg[1] != '\x00': raise ProxyException('socks5 connection failed')
 	return (remote, reply(af, remote))
 def tcp_socks4(addr, addrtype, port, conf):
 	if addrtype != 1: raise ProxyException('addrtype not supported by this method')
 	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
 	remote.sendall('\x04\x01' + struct.pack('>H', port) + inet_pton(socket.AF_INET, addr) + 'vani\x00')
-	if recvall(remote, 8)[1] != 'Z': raise ProxyException('socks4 connection failed')
+	msg = recvall(remote, 8)
+	if len(msg) < 2 or msg[1] != 'Z': raise ProxyException('socks4 connection failed')
 	return (remote, reply(af, remote))
 def tcp_http_tunnel(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
