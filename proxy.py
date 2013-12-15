@@ -91,8 +91,6 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 									else:
 										lock.release()
 										(af, ip) = eval('tcp' + dnsconf['type'])(addr, dnsconf)
-										if af == socket.AF_INET and '4to6' in dnsconf:
-											(af, ip) = (socket.AF_INET6, dnsconf['4to6'] + ':' + ip)
 										if af == socket.AF_INET:
 											iptype = 1
 										else:
@@ -100,6 +98,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 										lock.acquire()
 										dnscache[info] = (time.time(), (ip, iptype))
 										lock.release()
+									if iptype == 1 and '4to6' in dnsconf:
+										ip, iptype = dnsconf['4to6'] + ':' + ip, 4
 									if not (ip, iptype) in resolvelist:
 										resolvelist.append((ip, iptype))
 										(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
@@ -164,7 +164,7 @@ def main():
 		server.serve_forever()
 	except KeyboardInterrupt:
 		server.shutdown()
-                server.server_close()
+		server.server_close()
 
 os.chdir(os.path.dirname(os.path.abspath(sys.argv[0])))
 config = getconf()
