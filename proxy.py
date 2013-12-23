@@ -152,6 +152,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 def handler(sig, frame):
 	global config
 	global cache
+	global dnscache
 	config = getconf()
 	lock.acquire()
 	cache = {}
