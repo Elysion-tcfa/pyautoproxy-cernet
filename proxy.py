@@ -45,26 +45,22 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					addrtype = 1
 				except socket.error: pass
 			port = struct.unpack('>H', recvall(sock, 2))[0]
+			flag = False
+			replysent = False
 			try:
 				if mode == 1:
-					remotelist = []
-					flag = False
 					newtype = False
-					tport = port
-					if tport > 1024: tport = 1024
 					lock.acquire()
-					if (addr, tport) in cache and time.time() - cache[(addr, tport)][0] < 300:
-						method = cache[(addr, tport)][1]
+					if (addr, port) in cache and time.time() - cache[(addr, port)][0] < 300:
+						choice = cache[(addr, port)][1]
 						lock.release()
-						for item in method:
-							try:
-								(remote, reply) = eval('tcp_' + item[0]['type'])(item[1], item[2], port, item[0])
-								remotelist.append([remote] + item)
-								flag = True
-							except (socket.error, ProxyException): pass
+						try:
+							(remote, reply) = eval('tcp_' + choice[0]['type'])(choice[1], choice[2], port, choice[0])
+							flag = True
+						except (socket.error, ProxyException): pass
 					else:
 						lock.release()
-					newtype = True
+					if not flag: newtype = True
 					for conf in curconfig:
 						if flag: break
 						if not conf['type'] in ['direct', 'http', 'http_tunnel', 'socks4', 'socks5']: continue
@@ -103,34 +99,45 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 									if not (ip, iptype) in resolvelist:
 										resolvelist.append((ip, iptype))
 										(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
-										remotelist.append([remote, conf, ip, iptype])
+										choice = [conf, ip, iptype]
 										flag = True
 								except (socket.error, ProxyException): pass
 						else:
 							try:
+								if conf['type'] == 'http':
+									if not replysent:
+										sock.sendall('\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+										replysent = True
+									sock.settimeout(0)
+									time.sleep(0.1)
+									try:
+										msg = sock.recv(65536, socket.MSG_PEEK)
+										header = re.match(r'(GET|HEAD|POST|PUT|DELETE|TRACE|OPTIONS|PATCH) ([^ ]*) HTTP/(1\.1|1\.0)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
+										if header == None:
+											raise StandardError
+									except:
+										sock.settimeout(None)
+										raise socket.error()
+									sock.settimeout(None)
 								(remote, reply) = eval('tcp_' + conf['type'])(addr, addrtype, port, conf)
-								remotelist.append([remote, conf, addr, addrtype])
-								if conf['type'] != 'http':
-									flag = True
+								choice = [conf, addr, addrtype]
+								flag = True
 							except (socket.error, ProxyException): pass
-					if remotelist == []: raise ProxyException('cannot connect to host')
+					if not flag: raise ProxyException('cannot connect to host')
 					if newtype:
 						lock.acquire()
-						cache[(addr, tport)] = (time.time(), map(lambda x: x[1:], remotelist))
+						cache[(addr, port)] = (time.time(), choice)
 						lock.release()
 					print 'Tcp connect to', addr, port
 				else:
-					reply = '\x05\x07\x00' + data[3]
+					reply = '\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00'
 			except (socket.error, ProxyException):
-				reply = '\x05\x05\x00' + data[3] + '\x00\x00\x00\x00\x00\x00'
-			sock.sendall(reply)
-			if reply[1] == '\x00':
+				reply = '\x05\x05\x00\x01\x00\x00\x00\x00\x00\x00'
+			if not replysent: sock.sendall(reply)
+			if flag:
 				if mode == 1:
-					try: handle_tcp(sock, remotelist)
-					except: raise socket.error
-					for i in range(0, len(remotelist)):
-						try: remotelist[i][0].close()
-						except: pass
+					try: handle_tcp(sock, remote, choice[0]['type'] == 'http')
+					except socket.error: raise socket.error()
 					lock.acquire()
 					cnt += 1
 					if cnt == 200:

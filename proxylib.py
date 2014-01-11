@@ -82,6 +82,59 @@ def reply(af, remote):
 		return '\x05\x00\x00\x04' + inet_pton(socket.AF_INET6, local[0]) + struct.pack('>H', local[1])
 	else:
 		return '\x05\x00\x00\x01' + inet_pton(socket.AF_INET, local[0]) + struct.pack('>H', local[1])
+def httpheader_read(sock, buf):
+	while buf.find('\r\n\r\n') == -1:
+		msg = sock.recv(8192)
+		time.sleep(0.0001)
+		if msg == '': raise socket.error()
+		buf += msg
+	return buf
+def httpheader_parse(header):
+	headerdict = {}
+	for it in re.finditer(r'([A-Za-z0-9-]+): (.+)\r\n', header):
+		headerdict[it.group(1).lower()] = it.group(2)
+	return headerdict
+def httpheader_bodylen(headerdict):
+	if 'transfer-encoding' in headerdict and headerdict['transfer-encoding'].lower().find('chunked') != -1:
+		chunked = True
+	else:
+		chunked = False
+	if 'content-length' in headerdict:
+		contentlen = int(headerdict['content-length'])
+	else:
+		contentlen = 0
+	return chunked, contentlen
+def httpbody_readwrite(sock, remote, buf, chunked, contentlen):
+	if chunked:
+		while True:
+			while buf.find('\r\n') == -1:
+				msg = sock.recv(8192)
+				time.sleep(0.0001)
+				if msg == '' or remote.sendall(msg) != None: raise socket.error()
+				buf += msg
+			pos = buf.find('\r\n')
+			contentlen = int(buf[: pos], 16) + 2
+			flag = contentlen == 2
+			buf = buf[pos+2: ]
+			while contentlen > 0:
+				if buf == '':
+					buf = sock.recv(8192)
+					time.sleep(0.0001)
+					if buf == '' or remote.sendall(buf) != None: raise socket.error()
+				newlen = contentlen - len(buf[: contentlen])
+				buf = buf[contentlen: ]
+				contentlen = newlen
+			if flag: break
+	else:
+		while contentlen > 0:
+			if buf == '':
+				buf = sock.recv(8192)
+				time.sleep(0.0001)
+				if buf == '' or remote.sendall(buf) != None: raise socket.error()
+			newlen = contentlen - len(buf[: contentlen])
+			buf = buf[contentlen: ]
+			contentlen = newlen
+	return buf
 
 def tcp_connect(addr, port, conf):
 	try:
@@ -96,89 +149,46 @@ def tcp_connect(addr, port, conf):
 	remote.connect((addr, port))
 	remote.settimeout(None)
 	return (af, remote)
-def handle_tcp(sock, remotelist):
-	httpmode = False
-	remoteid = 0
-	for i in range(0, len(remotelist)):
-		if remotelist[i][1]['type'] == 'http':
-			remoteid = i
-			httpmode = True
-			nowclient = True
-			contentlen = -1
-			break
-	while True:
-		r, w, e = select.select([sock, remotelist[remoteid][0]], [], [])
-		if sock in r:
-			msg = sock.recv(8192)
-			if len(msg) == 0: break
-			if httpmode:
-				try:
-					if not nowclient: raise ProxyException()
-					if contentlen == -1:
-						header = re.match(r'(GET|HEAD|POST|PUT|DELETE|TRACE|OPTIONS|PATCH) ([^ ]*) HTTP/(1\.1|1\.0|0\.9)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
-						if header == None: raise ProxyException()
-						body = msg[len(header.group(0)): ]
-						header = header.groups()
-						headerdict = {}
-						for it in re.finditer(r'([A-Za-z0-9-]+): (.+)\r\n', header[3]):
-							headerdict[it.group(1)] = it.group(2)
-						if 'Host' not in headerdict: raise ProxyException()
-						if 'Content-Length' in headerdict:
-							contentlen = int(headerdict['Content-Length'])
-						else:
-							contentlen = 0
-						msg = '%s http://%s%s HTTP/%s\r\n%s\r\n%s' % (header[0], headerdict['Host'], header[1], header[2], header[3], body)
-					else:
-						body = msg
-					contentlen -= len(body)
-					if contentlen <= 0:
-						nowclient = False
-						contentlen = -1
-				except ProxyException:
-					remotelist[remoteid][0].close()
-					httpmode = False
-					remoteid = -1
-					for i in range(0, len(remotelist)):
-						if remotelist[i][1]['type'] != 'http':
-							remoteid = i
-							break
-					if remoteid == -1: break
-			time.sleep(0.0001)
-			if remotelist[remoteid][0].sendall(msg) != None: break
-		if remotelist[remoteid][0] in r:
-			msg = remotelist[remoteid][0].recv(8192)
-			if len(msg) == 0: break
-			if httpmode:
-				try:
-					if nowclient: raise ProxyException()
-					if contentlen == -1:
-						header = re.match(r'HTTP/(1\.1|1\.0|0\.9) \d{3}( [A-Za-z0-9-]*)?\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
-						if header == None: raise ProxyException()
-						body = msg[len(header.group(0)): ]
-						header = header.groups()
-						headerdict = {}
-						for it in re.finditer(r'([A-Za-z0-9-]+): (.+)\r\n', header[2]):
-							headerdict[it.group(1)] = it.group(2)
-						if 'Content-Length' in headerdict:
-							contentlen = int(headerdict['Content-Length'])
-						else:
-							contentlen = 0
-					else:
-						body = msg
-					contentlen -= len(body)
-					if contentlen <= 0:
-						nowclient = True
-						contentlen = -1
-				except ProxyException:
-					httpmode = False
-					remoteid = -1
-					for i in range(0, len(remotelist)):
-						if remotelist[i][1]['type'] != 'http':
-							remoteid = i
-							break
-					if remoteid == -1: break
-			time.sleep(0.0001)
-			if sock.sendall(msg) != None: break
+def handle_tcp(sock, remote, httpmode):
+	if httpmode:
+		sockbuf = ''
+		remotebuf = ''
+		while True:
+			try:
+				sockbuf = httpheader_read(sock, sockbuf)
+				header = re.match(r'(GET|HEAD|POST|PUT|DELETE|TRACE|OPTIONS|PATCH) ([^ ]+) HTTP/(1\.1|1\.0)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', sockbuf)
+				if header == None: break
+				sockbuf = sockbuf[len(header.group(0)): ]
+				header = header.groups()
+				headerdict = httpheader_parse(header[3])
+				if 'host' not in headerdict: break
+				chunked, contentlen = httpheader_bodylen(headerdict)
+				msg = '%s http://%s%s HTTP/%s\r\n%s\r\n%s' % (header[0], headerdict['host'], header[1], header[2], header[3], sockbuf)
+				time.sleep(0.0001)
+				if remote.sendall(msg) != None: break
+				sockbuf = httpbody_readwrite(sock, remote, sockbuf, chunked, contentlen)
+
+				remotebuf = httpheader_read(remote, remotebuf)
+				if sock.sendall(remotebuf) != None: break
+				header = re.match(r'HTTP/(1\.1|1\.0) \d{3}( [A-Za-z0-9-]*)?\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', remotebuf)
+				if header == None: break
+				remotebuf = remotebuf[len(header.group(0)): ]
+				header = header.groups()
+				headerdict = httpheader_parse(header[2])
+				chunked, contentlen = httpheader_bodylen(headerdict)
+				remotebuf = httpbody_readwrite(remote, sock, remotebuf, chunked, contentlen)
+			except: break
+	else:
+		while True:
+			r, w, e = select.select([sock, remote], [], [])
+			if sock in r:
+				msg = sock.recv(8192)
+				time.sleep(0.0001)
+				if msg == '' or remote.sendall(msg) != None: break
+			if remote in r:
+				msg = remote.recv(8192)
+				time.sleep(0.0001)
+				if msg == '' or sock.sendall(msg) != None: break
 
 def tcp_direct(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(addr, port, conf)
