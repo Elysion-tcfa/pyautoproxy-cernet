@@ -1,21 +1,21 @@
-import re
+import re, socket, struct
+from proxylib import inet_pton
 
 def gettable(fpath):
 	fp = open(fpath, 'rU')
 	ret = []
 	for s in fp.readlines():
-		s = s.rstrip('\r\n')
+		s = s.strip()
 		if len(s) == 0 or s[0] == '#': continue
-		cur = filter(lambda x: len(x) > 0, s.replace('\t', ' ').split(' '))
-		if len(cur) > 0: ret.append(cur)
+		ret.append(s)
 	fp.close()
 	return ret
-def getconf():
-	fp = open('proxy.conf', 'rU')
+def getconf(conffile):
+	fp = open(conffile, 'rU')
 	ret = []
 	cur = dict()
 	for s in fp.readlines() + ['type=nonsense']:
-		s = s.rstrip('\r\n')
+		s = s.strip()
 		if len(s) == 0 or s[0] == '#': continue
 		if s[0: 5] == 'type=':
 			if len(cur) > 0:
@@ -28,7 +28,7 @@ def getconf():
 			cur[s[0: pos]] = tmp
 	fp.close()
 	return ret
-def match(regex, target):
+def domain_match(regex, target):
 	regex = regex.split('.')
 	target = target.split('.')
 	tmp = 1
@@ -49,14 +49,51 @@ def match(regex, target):
 		tmp = tmp2
 		if tmp == 0: return False
 	return (tmp & (1 << l)) > 0
-def filtered(addr, filterlist):
+def ipv4_match(rule, target):
+	try:
+		ip, netlen = re.match(r'^([0-9.]*)\/([0-9]*)$', rule).groups()
+		netlen = int(netlen)
+	except:
+		ip, netlen = rule, 32
+	try:
+		ip = struct.unpack('!I', inet_pton(socket.AF_INET, ip))[0]
+		tgtip = struct.unpack('!I', inet_pton(socket.AF_INET, target))[0]
+	except: return False
+	subnet = (1 << 32) - (1 << 32 - netlen)
+	return (tgtip & subnet) == (ip & subnet)
+def ipv6_match(rule, target):
+	try:
+		ip, netlen = re.match(r'^\[([0-9a-fA-F:]*)\]\/([0-9]*)$', rule).groups()
+		netlen = int(netlen)
+	except:
+		try:
+			ip, netlen = re.match(r'^\[([0-9a-fA-F:]*)\]$', rule).group(1), 128
+		except: return False
+	try:
+		ip = (lambda x: (x[0] << 64) + x[1]) (struct.unpack('!QQ', inet_pton(socket.AF_INET6, ip)))
+		tgtip = (lambda x: (x[0] << 64) + x[1]) (struct.unpack('!QQ', inet_pton(socket.AF_INET6, target)))
+	except: return False
+	subnet = (1 << 128) - (1 << 128 - netlen)
+	return (tgtip & subnet) == (ip & subnet)
+def port_match(rule, port):
+	for portsect in rule.split(','):
+		try:
+			try:
+				portstart, portend = map(int, re.search(r'^(\d+)-(\d+)', portsect).groups())
+			except:
+				portstart = portend = int(portsect)
+			if port >= portstart and port <= portend:
+				return True
+		except: pass
+	return False
+def filtered(addr, port, filterlist, match):
 	for fil in filterlist:
-		if match(fil[0], addr):
+		portmatched = True
+		portsect = re.search(r':([^\]]*)$', fil)
+		if portsect is not None:
+			portsect = portsect.group(1)
+			portmatched = port_match(portsect, port)
+			fil = fil[: -len(portsect)-1]
+		if portmatched and match(fil, addr):
 			return True
 	return False
-def portrange(port, portconf):
-	if '-' in portconf:
-		start, end = re.match('^(\d+)-(\d+)$', portconf).groups()
-		return port >= int(start) and port <= int(end)
-	else:
-		return port == int(portconf)

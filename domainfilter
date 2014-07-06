@@ -2,6 +2,7 @@
 *.blogspot.com
 *.blogger.com
 *.googleusercontent.com
+docs.google.com
 *.youtube.com
 *.ytimg.com
 *.facebook.com
@@ -13,3 +14,7 @@
 *.twimg.com
 *.vimeo.com
 *.googlevideo.com
+av.voanews.com
+*.nytimes.com
+github.global.ssl.fastly.net
+picasaweb.google.com

@@ -1,4 +1,4 @@
-import socket, sys, select, SocketServer, struct, os, time, threading, signal
+import socket, sys, select, SocketServer, struct, os, time, threading, signal, getopt
 from proxylib import *
 from conflib import *
 
@@ -64,18 +64,27 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 					for conf in curconfig:
 						if flag: break
 						if not conf['type'] in ['direct', 'http', 'http_tunnel', 'socks4', 'socks5']: continue
-						if 'domainaccept' in conf and not filtered(addr, conf['domainaccept']): continue
-						if 'domainexcept' in conf and filtered(addr, conf['domainexcept']): continue
+						if addrtype == 3:
+							if 'domainaccept' in conf and not filtered(addr, port, conf['domainaccept'], domain_match): continue
+							if 'domainexcept' in conf and filtered(addr, port, conf['domainexcept'], domain_match): continue
 						if 'port' in conf and not portrange(port, conf['port']): continue
-						if conf['type'] in ['direct', 'socks4'] or ('hostname' in conf and conf['hostname'] == '0'):
-							resolvelist = []
-							for dnsconf in curconfig:
-								try:
-									if flag: break
+						if not (addrtype == 3 and (conf['type'] in ['direct', 'socks4'] or
+							(conf['type'] in ['socks5'] and 'hostname' in conf and conf['hostname'] == '0'))):
+							dnsconfig = [{}]
+						else:
+							dnsconfig = curconfig
+						resolvelist = []
+						for dnsconf in dnsconfig:
+							try:
+								if flag: break
+								if not 'type' in dnsconf:
+									ip, iptype = addr, addrtype
+								else:
 									if not dnsconf['type'] in ['dns_direct6', 'dns_direct4', 'dns_proxy6', 'dns_proxy4']: continue
 									if conf['type'] in ['socks4'] and not dnsconf['type'] in ['dns_direct4', 'dns_proxy4']: continue
-									if 'domainaccept' in dnsconf and not filtered(addr, dnsconf['domainaccept']): continue
-									if 'domainexcept' in dnsconf and filtered(addr, dnsconf['domainexcept']): continue
+									if addrtype == 3:
+										if 'domainaccept' in dnsconf and not filtered(addr, port, dnsconf['domainaccept'], domain_match): continue
+										if 'domainexcept' in dnsconf and filtered(addr, port, dnsconf['domainexcept'], domain_match): continue
 									if dnsconf['type'] in ['dns_proxy4', 'dns_proxy6']:
 										info = (addr, dnsconf['type'], dnsconf['server'], dnsconf['serverport'])
 									else:
@@ -94,34 +103,32 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 										lock.acquire()
 										dnscache[info] = (time.time(), (ip, iptype))
 										lock.release()
-									if iptype == 1 and '4to6' in dnsconf:
-										ip, iptype = dnsconf['4to6'] + ':' + ip, 4
-									if not (ip, iptype) in resolvelist:
-										resolvelist.append((ip, iptype))
-										(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
-										choice = [conf, ip, iptype]
-										flag = True
-								except (socket.error, ProxyException): pass
-						else:
-							try:
-								if conf['type'] == 'http':
-									if not replysent:
-										sock.sendall('\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
-										replysent = True
-									sock.settimeout(0)
-									time.sleep(0.1)
-									try:
-										msg = sock.recv(65536, socket.MSG_PEEK)
-										header = re.match(r'(GET|HEAD|POST|PUT|DELETE|TRACE|OPTIONS|PATCH) ([^ ]*) HTTP/(1\.1|1\.0)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
-										if header == None:
-											raise StandardError
-									except:
+								if not (ip, iptype) in resolvelist:
+									resolvelist.append((ip, iptype))
+									if iptype == 1:
+										if 'ipv4accept' in conf and not filtered(addr, port, conf['ipv4accept'], ipv4_match): continue
+										if 'ipv4except' in conf and filtered(addr, port, conf['ipv4except'], ipv4_match): continue
+									elif iptype == 4:
+										if 'ipv6accept' in conf and not filtered(addr, port, conf['ipv6accept'], ipv6_match): continue
+										if 'ipv6except' in conf and filtered(addr, port, conf['ipv6except'], ipv6_match): continue
+									if conf['type'] == 'http':
+										if not replysent:
+											sock.sendall('\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
+											replysent = True
+										sock.settimeout(0)
+										time.sleep(0.1)
+										try:
+											msg = sock.recv(65536, socket.MSG_PEEK)
+											header = re.match(r'(GET|HEAD|POST|PUT|DELETE|TRACE|OPTIONS|PATCH) ([^ ]*) HTTP/(1\.1|1\.0)\r\n(([A-Za-z0-9-]+: .+\r\n)*)\r\n', msg)
+											if header == None:
+												raise StandardError
+										except:
+											sock.settimeout(None)
+											raise socket.error()
 										sock.settimeout(None)
-										raise socket.error()
-									sock.settimeout(None)
-								(remote, reply) = eval('tcp_' + conf['type'])(addr, addrtype, port, conf)
-								choice = [conf, addr, addrtype]
-								flag = True
+									(remote, reply) = eval('tcp_' + conf['type'])(ip, iptype, port, conf)
+									choice = [conf, ip, iptype]
+									flag = True
 							except (socket.error, ProxyException): pass
 					if not flag: raise ProxyException('cannot connect to host')
 					if newtype:
@@ -164,18 +171,26 @@ def handler(sig, frame):
 	lock.acquire()
 	cache = {}
 	dnscache = {}
+	cnt = 0
 	lock.release()
 def main():
+	global bindaddr, bindport
 	signal.signal(signal.SIGHUP, handler)
-	server = ThreadingTCPServer(('127.0.0.1', 1080), Socks5Server)
+	server = ThreadingTCPServer((bindaddr, bindport), Socks5Server)
 	try:
 		server.serve_forever()
 	except KeyboardInterrupt:
 		server.shutdown()
 		server.server_close()
 
-os.chdir(os.path.dirname(os.path.abspath(sys.argv[0])))
-config = getconf()
+bindaddr = '127.0.0.1'
+bindport = 1080
+conffile = os.path.join(os.path.expanduser('~'), '.pyautoproxy.conf')
+for opt in getopt.getopt(sys.argv[1:], 'b:p:c:')[0]:
+	if opt[0] == '-b': bindaddr = opt[1]
+	elif opt[0] == '-p': bindport = int(opt[1])
+	elif opt[0] == '-c': conffile = opt[1]
+config = getconf(conffile)
 cache = {}
 dnscache = {}
 lock = threading.Lock()

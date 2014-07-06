@@ -1,4 +1,4 @@
-import sys, socket, ctypes, select, struct, time, re, conflib
+import sys, socket, ctypes, select, struct, time, re
 windows = (sys.platform.startswith('win32') or sys.platform.startswith('cygwin'))
 if windows:
 	winsock = ctypes.WinDLL("ws2_32.dll")
@@ -147,7 +147,6 @@ def tcp_connect(addr, port, conf):
 		remote.settimeout(int(conf['timeout']))
 	except StandardError: pass
 	remote.connect((addr, port))
-	remote.settimeout(None)
 	return (af, remote)
 def handle_tcp(sock, remote, httpmode):
 	if httpmode:
@@ -192,6 +191,7 @@ def handle_tcp(sock, remote, httpmode):
 
 def tcp_direct(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(addr, port, conf)
+	remote.settimeout(None)
 	return (remote, reply(af, remote))
 def tcp_socks5(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
@@ -205,6 +205,7 @@ def tcp_socks5(addr, addrtype, port, conf):
 	remote.sendall(data)
 	msg = remote.recv(4096)
 	if len(msg) < 2 or msg[1] != '\x00': raise ProxyException('socks5 connection failed')
+	remote.settimeout(None)
 	return (remote, reply(af, remote))
 def tcp_socks4(addr, addrtype, port, conf):
 	if addrtype != 1: raise ProxyException('addrtype not supported by this method')
@@ -212,6 +213,7 @@ def tcp_socks4(addr, addrtype, port, conf):
 	remote.sendall('\x04\x01' + struct.pack('>H', port) + inet_pton(socket.AF_INET, addr) + 'vani\x00')
 	msg = recvall(remote, 8)
 	if len(msg) < 2 or msg[1] != 'Z': raise ProxyException('socks4 connection failed')
+	remote.settimeout(None)
 	return (remote, reply(af, remote))
 def tcp_http_tunnel(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
@@ -219,9 +221,11 @@ def tcp_http_tunnel(addr, addrtype, port, conf):
 	remote.sendall('CONNECT ' + addr + ':' + str(port) + ' HTTP/1.1\r\n\r\n')
 	tmp = remote.recv(4096).split(' ')
 	if len(tmp) < 2 or tmp[1] != '200': raise ProxyException('http tunnel connection failed')
+	remote.settimeout(None)
 	return (remote, reply(af, remote))
 def tcp_http(addr, addrtype, port, conf):
 	(af, remote) = tcp_connect(conf['server'], int(conf['serverport']), conf)
+	remote.settimeout(None)
 	return (remote, reply(af, remote))
 
 def tcpdns_direct6(addr, conf):
