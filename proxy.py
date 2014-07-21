@@ -65,9 +65,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 						if flag: break
 						if not conf['type'] in ['direct', 'http', 'http_tunnel', 'socks4', 'socks5']: continue
 						if addrtype == 3:
-							if 'domainaccept' in conf and not filtered(addr, port, conf['domainaccept'], domain_match): continue
-							if 'domainexcept' in conf and filtered(addr, port, conf['domainexcept'], domain_match): continue
-						if 'port' in conf and not portrange(port, conf['port']): continue
+							if 'domainaccept' in conf and not conf['domainaccept'](addr, port): continue
+							if 'domainexcept' in conf and conf['domainexcept'](addr, port): continue
 						if not (addrtype == 3 and (conf['type'] in ['direct', 'socks4'] or
 							(conf['type'] in ['socks5'] and 'hostname' in conf and conf['hostname'] == '0'))):
 							dnsconfig = [{}]
@@ -83,8 +82,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 									if not dnsconf['type'] in ['dns_direct6', 'dns_direct4', 'dns_proxy6', 'dns_proxy4']: continue
 									if conf['type'] in ['socks4'] and not dnsconf['type'] in ['dns_direct4', 'dns_proxy4']: continue
 									if addrtype == 3:
-										if 'domainaccept' in dnsconf and not filtered(addr, port, dnsconf['domainaccept'], domain_match): continue
-										if 'domainexcept' in dnsconf and filtered(addr, port, dnsconf['domainexcept'], domain_match): continue
+										if 'domainaccept' in dnsconf and not dnsconf['domainaccept'](addr, port): continue
+										if 'domainexcept' in dnsconf and dnsconf['domainexcept'](addr, port): continue
 									if dnsconf['type'] in ['dns_proxy4', 'dns_proxy6']:
 										info = (addr, dnsconf['type'], dnsconf['server'], dnsconf['serverport'])
 									else:
@@ -106,11 +105,11 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 								if not (ip, iptype) in resolvelist:
 									resolvelist.append((ip, iptype))
 									if iptype == 1:
-										if 'ipv4accept' in conf and not filtered(addr, port, conf['ipv4accept'], ipv4_match): continue
-										if 'ipv4except' in conf and filtered(addr, port, conf['ipv4except'], ipv4_match): continue
+										if 'ipv4accept' in conf and not conf['ipv4accept'](addr, port): continue
+										if 'ipv4except' in conf and conf['ipv4except'](addr, port): continue
 									elif iptype == 4:
-										if 'ipv6accept' in conf and not filtered(addr, port, conf['ipv6accept'], ipv6_match): continue
-										if 'ipv6except' in conf and filtered(addr, port, conf['ipv6except'], ipv6_match): continue
+										if 'ipv6accept' in conf and not conf['ipv6accept'](addr, port): continue
+										if 'ipv6except' in conf and conf['ipv6except'](addr, port): continue
 									if conf['type'] == 'http':
 										if not replysent:
 											sock.sendall('\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')
@@ -164,10 +163,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			try: remote.close()
 			except: pass
 def handler(sig, frame):
-	global config
-	global cache
-	global dnscache
-	config = getconf()
+	global config, cache, dnscache, conffile
+	config = getconf(conffile)
 	lock.acquire()
 	cache = {}
 	dnscache = {}
