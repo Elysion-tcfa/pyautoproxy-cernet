@@ -69,12 +69,33 @@ def gethostbyname_extra(af, addr, conf):
 			msgr = msgr[pos + 10 + ord(msgr[pos + 9]): ]
 		num -= 1
 	raise socket.error('cannot get host')
-def recvall(sock, count):
+def sendall(sock, msg, deadline = None):
+	while msg:
+		if deadline is not None:
+			sock.settimeout(deadline - time.time())
+		l = sock.send(msg)
+		msg = msg[l: ]
+	sock.settimeout(None)
+def recvall(sock, count, deadline = None):
 	data = ''
 	while len(data) < count:
+		if deadline is not None:
+			sock.settimeout(deadline - time.time())
 		d = sock.recv(count - len(data))
 		if not d: raise socket.error('connection closed unexpectedly')
-		data = data + d
+		data += d
+	sock.settimeout(None)
+	return data
+def recvuntil(sock, ending, deadline = -1):
+	data = ''
+	while True:
+		if deadline is not None:
+			sock.settimeout(deadline - time.time())
+		d = sock.recv(1)
+		if not d: raise socket.error('connection closed unexpectedly')
+		data += d
+		if data[-len(ending): ] == ending: break
+	sock.settimeout(None)
 	return data
 def reply(af, remote):
 	local = remote.getsockname()

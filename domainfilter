@@ -17,4 +17,5 @@ docs.google.com
 av.voanews.com
 *.nytimes.com
 github.global.ssl.fastly.net
-picasaweb.google.com
+*.google.com
+*.gstatic.com

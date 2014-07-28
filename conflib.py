@@ -25,7 +25,7 @@ def analyze(val, globvar):
 	return newval[1: ]
 def getconf(conffile):
 	fp = open(conffile, 'rU')
-	ret = []
+	ret = {'servers': [], 'dns_servers': []}
 	globvar = dict()
 	cur = globvar
 	glob = True
@@ -33,20 +33,31 @@ def getconf(conffile):
 		s = s.strip()
 		if len(s) == 0 or s[0] == '#': continue
 		if s[0: 5] == 'type=':
-			if not glob and len(cur) > 0:
-				ret.append(cur)
+			if glob:
+				ret = dict(cur)
+				ret.update({'servers': [], 'dns_servers': []})
+			elif cur['type'][0: 4] == 'dns_':
+				cur['type'] = cur['type'][4: ]
+				ret['dns_servers'].append(cur)
+			else:
+				ret['servers'].append(cur)
 			cur = dict()
 			glob = False
 		pos = s.find('=')
 		if pos != -1:
 			key = s[0: pos]
 			val = analyze(s[pos + 1: ], globvar)
-			if key in ['ipv4accept', 'ipv4except']:
-				val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv4_match)
-			elif key in ['ipv6accept', 'ipv6except']:
-				val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv6_match)
-			elif key in ['domainaccept', 'domainexcept']:
-				val = filtered(filter(lambda x: x[0] != '#', val.split()), domain_match)
+			if not glob and key != 'type':
+				if cur['type'][0: 4] == 'dns_':
+					if key in ['domainaccept', 'domainexcept']:
+						val = dns_filtered(filter(lambda x: x[0] != '#', val.split()))
+				else:
+					if key in ['ipv4accept', 'ipv4except']:
+						val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv4_match)
+					elif key in ['ipv6accept', 'ipv6except']:
+						val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv6_match)
+					elif key in ['domainaccept', 'domainexcept']:
+						val = filtered(filter(lambda x: x[0] != '#', val.split()), domain_match)
 			cur[key] = val
 	fp.close()
 	return ret
@@ -124,6 +135,16 @@ def filtered(filterlist, addr_match):
 	def fun(addr, port):
 		for addrfun, portfun in filterfuns:
 			if addrfun(addr) and portfun(port):
+				return True
+		return False
+	return fun
+def dns_filtered(filterlist):
+	filterfuns = []
+	for fil in filterlist:
+		filterfuns.append(domain_match(fil))
+	def fun(addr):
+		for addrfun in filterfuns:
+			if addrfun(addr):
 				return True
 		return False
 	return fun
