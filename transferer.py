@@ -1,6 +1,6 @@
 import socket, select, struct, time
 from proxylib import inet_pton, inet_ntop, recvall, sendall, recvuntil, ProxyException
-import nameresolver, cache
+import nameresolver, cache, httpmachine
 
 class BaseTransferer:
 	def __init__(self, localsock, remoteaddr, buf, conf):
@@ -23,21 +23,50 @@ class BaseTransferer:
 			msg = '\x05\x00\x00\x01' + inet_pton(socket.AF_INET, addr[0])
 		msg += struct.pack('>H', addr[1])
 		return msg
+	def finish_http_req(self, m):
+		if m.reqbuf is None: raise
+		while not m.resp_not_ready():
+			msg = self.remote.recv(8192)
+			if msg == '':
+				return 0
+			m.read_resp(msg)
+			if self.local.sendall(msg) != None:
+				return 0
+		self.localbuf += bytearray(m.reqbuf)
 	def handle_tcp(self):
+		monitor = False
+		if 'httpaccept' in self.conf or 'httpexcept' in self.conf:
+			monitor = True
+			m = httpmachine.HTTPMachine(self.conf)
+		localmsg = str(self.localbuf)
+		remotemsg = str(self.remotebuf)
+		self.localbuf.__init__()
+		self.remotebuf.__init__()
 		while True:
-			if self.localbuf and self.local.sendall(self.localbuf) != None: break
-			self.localbuf.__init__()
-			if self.remotebuf and self.remote.sendall(self.remotebuf) != None: break
-			self.remotebuf.__init__()
+			if remotemsg:
+				if monitor:
+					try: m.read_resp(remotemsg)
+					except ValueError:
+						monitor = False
+				if self.local.sendall(remotemsg) != None: break
+				remotemsg = ''
+			if localmsg:
+				if monitor:
+					try: m.read_req(localmsg)
+					except ProxyException:
+						self.finish_http_req(m)
+						return -1
+					except ValueError:
+						monitor = False
+				if self.remote.sendall(localmsg) != None: break
+				localmsg = ''
 			r, w, e = select.select([self.local, self.remote], [], [])
 			if self.local in r:
-				msg = self.local.recv(8192)
-				if msg == '': break
-				self.remotebuf += bytearray(msg)
+				localmsg = self.local.recv(8192)
+				if localmsg == '': break
 			if self.remote in r:
-				msg = self.remote.recv(8192)
-				if msg == '': break
-				self.localbuf += bytearray(msg)
+				remotemsg = self.remote.recv(8192)
+				if remotemsg == '': break
 			time.sleep(0.0001)
 		return 0
 
@@ -98,15 +127,52 @@ class HTTPTunnelTransferer(BaseTransferer):
 
 class HTTPTransferer(BaseTransferer):
 	def setup(self):
+		self.wait_timeout = 3
+		if 'wait_timeout' in self.conf:
+			self.wait_timeout = float(self.conf['wait_timeout'])
 		self.remote = socket.create_connection((self.conf['server'],
 				int(self.conf['serverport'])), timeout = self.timeout)
 	def handle_tcp(self):
-		pass
+		m = httpmachine.HTTPTransferMachine(self.conf)
+		localmsg = str(self.localbuf)
+		remotemsg = str(self.remotebuf)
+		self.localbuf.__init__()
+		self.remotebuf.__init__()
+		while True:
+			if remotemsg:
+				m.read_resp(remotemsg)
+				if self.local.sendall(m.respoutbuf) != None: break
+				m.respoutbuf = ''
+				remotemsg = ''
+			if localmsg:
+				try:
+					m.read_req(localmsg)
+					if self.remote.sendall(m.reqoutbuf) != None: break
+					m.reqoutbuf = ''
+					localmsg = ''
+				except (ProxyException, ValueError):
+					self.finish_http_req(m)
+					return -1
+			if m.req_needed():
+				r, w, e = select.select([self.local, self.remote], [], [], self.wait_timeout)
+			else:
+				r, w, e = select.select([self.local, self.remote], [], [])
+			if not r:
+				self.finish_http_req(m)
+				return -1
+			if self.local in r:
+				localmsg = self.local.recv(8192)
+				if localmsg == '': break
+			if self.remote in r:
+				remotemsg = self.remote.recv(8192)
+				if remotemsg == '': break
+			time.sleep(0.0001)
+		return 0
 
 _cache = cache.Cache()
 _classdict = {'direct': DirectTransferer, 'socks5': Socks5Transferer,
-		'socks4': Socks4Transferer, 'http_tunnel': HTTPTunnelTransferer}
-		#'http': HTTPTransferer}
+		'socks4': Socks4Transferer, 'http_tunnel': HTTPTunnelTransferer,
+		'http': HTTPTransferer}
 
 def _need_resolve(serverconf):
 	return serverconf['type'] in ['direct', 'socks4'] \

@@ -78,7 +78,7 @@ class Timer(threading.Thread):
 			nameresolver._cache.cleanup()
 
 def handler(sig, frame):
-	global conffile
+	global conffile, config
 	config = conflib.getconf(conffile)
 	transferer._cache.flush()
 	nameresolver._cache.flush()

@@ -58,6 +58,8 @@ def getconf(conffile):
 						val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv6_match)
 					elif key in ['domainaccept', 'domainexcept']:
 						val = filtered(filter(lambda x: x[0] != '#', val.split()), domain_match)
+					elif key in ['httpaccept', 'httpexcept']:
+						val = http_filtered(filter(lambda x: x[0] != '#', val.split()))
 			cur[key] = val
 	fp.close()
 	return ret
@@ -122,6 +124,10 @@ def port_match(rule):
 				return True
 		return False
 	return fun
+def httpurl_match(rule):
+	def fun(url):
+		return re.search(rule, url) is not None
+	return fun
 def filtered(filterlist, addr_match):
 	filterfuns = []
 	for fil in filterlist:
@@ -145,6 +151,16 @@ def dns_filtered(filterlist):
 	def fun(addr):
 		for addrfun in filterfuns:
 			if addrfun(addr):
+				return True
+		return False
+	return fun
+def http_filtered(filterlist):
+	filterfuns = []
+	for fil in filterlist:
+		filterfuns.append(httpurl_match(fil))
+	def fun(url):
+		for urlfun in filterfuns:
+			if urlfun(url):
 				return True
 		return False
 	return fun
