@@ -1,23 +1,23 @@
-import socket, sys, select, SocketServer, struct, os, time, threading, signal, getopt
-from proxylib import sendall, recvall, inet_ntop, inet_pton, ProxyException
+import socket, sys, SocketServer, struct, os, time, threading, signal, getopt, proxylib
+from proxylib import ProxyException
 import conflib, transferer, nameresolver
 
 class ThreadingTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
     allow_reuse_address = True
 class Socks5Server(SocketServer.StreamRequestHandler):
 	def _recv_first_msg(self):
-		msg = recvall(self.connection, 2)
-		msg += recvall(self.connection, ord(msg[1]))
+		msg = self.connection.recvall(2)
+		msg += self.connection.recvall(ord(msg[1]))
 		return msg
 	def _recv_second_msg(self):
-		msg = recvall(self.connection, 7)
+		msg = self.connection.recvall(7)
 		if msg[3] == '\x01':
 			dlen = 3
 		elif msg[3] == '\x03':
 			dlen = ord(msg[4])
 		elif msg[3] == '\x04':
 			dlen = 15
-		msg += recvall(self.connection, dlen)
+		msg += self.connection.recvall(dlen)
 		return msg
 	def handle(self):
 		global config
@@ -27,23 +27,23 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			print 'socks connection from ', self.client_address
 			sock.settimeout(30)
 			self._recv_first_msg()
-			sendall(sock, '\x05\x00')
+			sock.sendall('\x05\x00')
 			msg = self._recv_second_msg()
 			mode, addrtype = ord(msg[1]), ord(msg[3])
 			if addrtype == 1:
-				addr = inet_ntop(socket.AF_INET, msg[4: -2])
+				addr = socket.inet_ntop(socket.AF_INET, msg[4: -2])
 			elif addrtype == 3:
 				addr = msg[5: -2]
 				try:
-					inet_pton(socket.AF_INET, addr)
+					socket.inet_pton(socket.AF_INET, addr)
 					addrtype = 1
 				except: pass
 				try:
-					inet_pton(socket.AF_INET6, addr)
+					socket.inet_pton(socket.AF_INET6, addr)
 					addrtype = 4
 				except: pass
 			elif addrtype == 4:
-				addr = inet_ntop(socket.AF_INET6, msg[4: -2])
+				addr = socket.inet_ntop(socket.AF_INET6, msg[4: -2])
 			port = struct.unpack('>H', msg[-2: ])[0]
 			sock.settimeout(None)
 			if mode == 1:
@@ -59,7 +59,7 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			else:
 				trans = None
 				reply = '\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00'
-			sendall(sock, reply)
+			sock.sendall(reply)
 		except socket.error as e:
 			print 'socket error'
 			return

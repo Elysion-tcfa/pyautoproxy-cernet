@@ -1,5 +1,4 @@
-import re, socket, struct
-from proxylib import inet_pton
+import re, socket, struct, socket, proxylib
 
 def analyze(val, globvar):
 	val = ' ' + val
@@ -92,10 +91,10 @@ def ipv4_match(rule):
 		netlen = int(netlen)
 	except:
 		ip, netlen = rule, 32
-	ip = struct.unpack('!I', inet_pton(socket.AF_INET, ip))[0]
+	ip = struct.unpack('!I', socket.inet_pton(socket.AF_INET, ip))[0]
 	subnet = (1 << 32) - (1 << 32 - netlen)
 	def fun(target):
-		tgtip = struct.unpack('!I', inet_pton(socket.AF_INET, target))[0]
+		tgtip = struct.unpack('!I', socket.inet_pton(socket.AF_INET, target))[0]
 		return (tgtip & subnet) == (ip & subnet)
 	return fun
 def ipv6_match(rule):
@@ -104,10 +103,10 @@ def ipv6_match(rule):
 		netlen = int(netlen)
 	except:
 		ip, netlen = re.match(r'^\[([0-9a-fA-F:]*)\]$', rule).group(1), 128
-	ip = (lambda x: (x[0] << 64) + x[1]) (struct.unpack('!QQ', inet_pton(socket.AF_INET6, ip)))
+	ip = (lambda x: (x[0] << 64) + x[1]) (struct.unpack('!QQ', socket.inet_pton(socket.AF_INET6, ip)))
 	subnet = (1 << 128) - (1 << 128 - netlen)
 	def fun(target):
-		tgtip = (lambda x: (x[0] << 64) + x[1]) (struct.unpack('!QQ', inet_pton(socket.AF_INET6, target)))
+		tgtip = (lambda x: (x[0] << 64) + x[1]) (struct.unpack('!QQ', socket.inet_pton(socket.AF_INET6, target)))
 		return (tgtip & subnet) == (ip & subnet)
 	return fun
 def port_match(rule):

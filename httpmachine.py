@@ -1,3 +1,4 @@
+import base64
 from proxylib import ProxyException
 CHARSET_ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 CHARSET_DIGIT = '0123456789'
@@ -303,8 +304,11 @@ class HTTPMachine:
 
 class HTTPTransferMixIn:
 	def _output_header_lines(self):
-		for line in self.header:
+		for line in self.extra_header:
 			self.outbuf += line[0] + ':' + line[1] + '\r\n'
+		for line in self.header:
+			if not line[0] in self.extra_headerkeys:
+				self.outbuf += line[0] + ':' + line[1] + '\r\n'
 		self.outbuf += '\r\n'
 	def _do_trans(self, newnode, ch):
 		self.node = newnode
@@ -315,8 +319,14 @@ class HTTPTransferMixIn:
 	def _header_accept(self, ch):
 		self._output_header()
 		HTTPMachineBase._header_accept(self, ch)
-	def __init__(self):
+	def __init__(self, conf):
 		self.outbuf = ''
+		self.conf = conf
+		self.extra_header = []
+		if 'auth' in self.conf:
+			self.extra_header.append(('Proxy-Authorization',
+				'Basic ' + base64.standard_b64encode(self.conf['authuser'] + ':' + self.conf['authpass'])))
+		self.extra_headerkeys = map(lambda x: x[0], self.extra_header)
 
 class HTTPReqTransferMachine(HTTPTransferMixIn, HTTPReqMachine):
 	def _output_header(self):
@@ -326,17 +336,17 @@ class HTTPReqTransferMachine(HTTPTransferMixIn, HTTPReqMachine):
 			requrl = self.url
 		self.outbuf += self.method + ' ' + requrl + ' ' + self.version + '\r\n'
 		self._output_header_lines()
-	def __init__(self):
+	def __init__(self, conf):
 		HTTPReqMachine.__init__(self)
-		HTTPTransferMixIn.__init__(self)
+		HTTPTransferMixIn.__init__(self, conf)
 
 class HTTPRespTransferMachine(HTTPTransferMixIn, HTTPRespMachine):
 	def _output_header(self):
 		self.outbuf += self.version + ' ' + self.status + '\r\n'
 		self._output_header_lines()
-	def __init__(self):
+	def __init__(self, conf):
 		HTTPRespMachine.__init__(self)
-		HTTPTransferMixIn.__init__(self)
+		HTTPTransferMixIn.__init__(self, conf)
 
 class HTTPTransferMachine(HTTPMachine):
 	def _do_read_request(self, s):
@@ -350,12 +360,12 @@ class HTTPTransferMachine(HTTPMachine):
 		self.response.outbuf = ''
 		return num
 	def _new_req_machine(self):
-		self.request = HTTPReqTransferMachine()
+		self.request = HTTPReqTransferMachine(self.conf)
 		self.reqcnt += 1
 		self.requrl = None
 		self.reqbuf = ''
 	def _new_resp_machine(self):
-		self.response = HTTPRespTransferMachine()
+		self.response = HTTPRespTransferMachine(self.conf)
 		self.respcnt += 1
 	def __init__(self, conf):
 		HTTPMachine.__init__(self, conf)

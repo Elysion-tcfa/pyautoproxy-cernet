@@ -1,5 +1,5 @@
-import socket, select, struct, time
-from proxylib import inet_pton, inet_ntop, recvall, sendall, recvuntil, ProxyException
+import socket, select, struct, time, base64, proxylib
+from proxylib import ProxyException
 import nameresolver, cache, httpmachine
 
 class BaseTransferer:
@@ -18,9 +18,9 @@ class BaseTransferer:
 	def replymsg(self):
 		addr = self.remote.getsockname()
 		if self.remote.family == socket.AF_INET6:
-			msg = '\x05\x00\x00\x04' + inet_pton(socket.AF_INET6, addr[0])
+			msg = '\x05\x00\x00\x04' + socket.inet_pton(socket.AF_INET6, addr[0])
 		else:
-			msg = '\x05\x00\x00\x01' + inet_pton(socket.AF_INET, addr[0])
+			msg = '\x05\x00\x00\x01' + socket.inet_pton(socket.AF_INET, addr[0])
 		msg += struct.pack('>H', addr[1])
 		return msg
 	def finish_http_req(self, m):
@@ -30,8 +30,7 @@ class BaseTransferer:
 			if msg == '':
 				return 0
 			m.read_resp(msg)
-			if self.local.sendall(msg) != None:
-				return 0
+			self.local.sendall(msg)
 		self.localbuf += bytearray(m.reqbuf)
 	def handle_tcp(self):
 		monitor = False
@@ -48,7 +47,7 @@ class BaseTransferer:
 					try: m.read_resp(remotemsg)
 					except ValueError:
 						monitor = False
-				if self.local.sendall(remotemsg) != None: break
+				self.local.sendall(remotemsg)
 				remotemsg = ''
 			if localmsg:
 				if monitor:
@@ -58,7 +57,7 @@ class BaseTransferer:
 						return -1
 					except ValueError:
 						monitor = False
-				if self.remote.sendall(localmsg) != None: break
+				self.remote.sendall(localmsg)
 				localmsg = ''
 			r, w, e = select.select([self.local, self.remote], [], [])
 			if self.local in r:
@@ -81,21 +80,21 @@ class Socks5Transferer(BaseTransferer):
 		deadline = self.timeout + time.time()
 		self.remote = socket.create_connection((self.conf['server'],
 				int(self.conf['serverport'])), timeout = self.timeout)
-		sendall(self.remote, '\x05\x01\x00', deadline)
-		msg = recvall(self.remote, 2, deadline)
+		self.remote.sendall('\x05\x01\x00', deadline)
+		msg = self.remote.recvall(2, deadline)
 		if msg[1] != '\x00':
 			raise ProxyException('socks5 connection failed')
 		data = '\x05\x01\x00' + chr(self.addrtype)
-		if self.addrtype == 1: data += inet_pton(socket.AF_INET, self.addr)
+		if self.addrtype == 1: data += socket.inet_pton(socket.AF_INET, self.addr)
 		elif self.addrtype == 3: data += chr(len(self.addr)) + self.addr
-		else: data += inet_pton(socket.AF_INET6, self.addr)
+		else: data += socket.inet_pton(socket.AF_INET6, self.addr)
 		data += struct.pack('>H', self.port)
-		sendall(self.remote, data, deadline)
-		msg = recvall(self.remote, 10, deadline)
+		self.remote.sendall(data, deadline)
+		msg = self.remote.recvall(10, deadline)
 		if msg[1] != '\x00':
 			raise ProxyException('socks5 connection failed')
 		if msg[3] == '\x04':
-			recvall(self.remote, 12, deadline)
+			self.remote.recvall(12, deadline)
 
 class Socks4Transferer(BaseTransferer):
 	def setup(self):
@@ -104,9 +103,9 @@ class Socks4Transferer(BaseTransferer):
 		deadline = self.timeout + time.time()
 		self.remote = socket.create_connection((self.conf['server'],
 				int(self.conf['serverport'])), timeout = self.timeout)
-		msg = '\x04\x01' + struct.pack('>H', port) + inet_pton(socket.AF_INET, addr) + '\x00'
-		sendall(self.remote, msg, deadline)
-		msg = recvall(self.remote, 8, deadline)
+		msg = '\x04\x01' + struct.pack('>H', port) + socket.inet_pton(socket.AF_INET, addr) + '\x00'
+		self.remote.sendall(msg, deadline)
+		msg = self.remote.recvall(8, deadline)
 		if msg[1] != 'Z':
 			raise ProxyException('socks4 connection failed')
 
@@ -118,10 +117,15 @@ class HTTPTunnelTransferer(BaseTransferer):
 		addr = self.addr
 		if self.addrtype == 4:
 			addr = '[' + addr + ']'
-		msg = 'CONNECT ' + addr + ':' + str(self.port) + ' HTTP/1.1\r\n\r\n'
-		sendall(self.remote, msg, deadline)
-		tmp = recvuntil(self.remote, '\r\n\r\n', deadline)
-		tmp = tmp.split(' ')
+		msg = 'CONNECT ' + addr + ':' + str(self.port) + ' HTTP/1.1\r\n'
+		if 'auth' in self.conf:
+			msg += 'Proxy-Authorization: Basic ' + \
+					base64.standard_b64encode(self.conf['authuser'] + ':' + self.conf['authpass']) + \
+					'\r\n'
+		msg += '\r\n'
+		self.remote.sendall(msg, deadline)
+		tmp = self.remote.recvuntil('\r\n\r\n', deadline)
+		tmp = tmp.split()
 		if len(tmp) < 2 or tmp[1] != '200':
 			raise ProxyException('http tunnel connection failed')
 
@@ -141,13 +145,13 @@ class HTTPTransferer(BaseTransferer):
 		while True:
 			if remotemsg:
 				m.read_resp(remotemsg)
-				if self.local.sendall(m.respoutbuf) != None: break
+				self.local.sendall(m.respoutbuf)
 				m.respoutbuf = ''
 				remotemsg = ''
 			if localmsg:
 				try:
 					m.read_req(localmsg)
-					if self.remote.sendall(m.reqoutbuf) != None: break
+					self.remote.sendall(m.reqoutbuf)
 					m.reqoutbuf = ''
 					localmsg = ''
 				except (ProxyException, ValueError):
@@ -236,7 +240,7 @@ class TransfererSelector:
 			for addrtype2, addr2 in remoteaddrs:
 				if addrtype2 == 4 and addr2[0: 7] == '::ffff:':
 					try:
-						inet_pton(socket.AF_INET, addr2[7: ])
+						socket.inet_pton(socket.AF_INET, addr2[7: ])
 						addr2 = addr2[7: ]
 						addrtype2 = 1
 					except socket.error: pass
