@@ -17,7 +17,7 @@ class BaseNameResolver:
 	def __init__(self, addr, conf):
 		self.conf = conf
 		self.addr = addr
-		self.timeout = 30.
+		self.timeout = 10.
 		if 'timeout' in conf:
 			self.timeout = float(conf['timeout'])
 	def resolve(self):

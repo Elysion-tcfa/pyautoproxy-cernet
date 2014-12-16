@@ -180,7 +180,7 @@ _classdict = {'direct': DirectTransferer, 'socks5': Socks5Transferer,
 
 def _need_resolve(serverconf):
 	return serverconf['type'] in ['direct', 'socks4'] \
-			or (serverconf['type'] in ['socks5'] \
+			or (serverconf['type'] in ['socks5', 'http_tunnel'] \
 				and 'hostname' in serverconf \
 				and serverconf['hostname'] == '0')
 

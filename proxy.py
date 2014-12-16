@@ -87,7 +87,7 @@ def main():
 	global bindaddr, bindport
 	try:
 		signal.signal(signal.SIGHUP, handler)
-	except ValueError: pass
+	except StandardError: pass
 	server = ThreadingTCPServer((bindaddr, bindport), Socks5Server)
 	timer = Timer(300)
 	timer.start()
