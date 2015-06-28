@@ -17,6 +17,8 @@ class Socks5Server(SocketServer.StreamRequestHandler):
 			dlen = ord(msg[4])
 		elif msg[3] == '\x04':
 			dlen = 15
+		else:
+			raise ProxyException('unknown connection type')
 		msg += self.connection.recvall(dlen)
 		return msg
 	def handle(self):
