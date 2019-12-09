@@ -1,6 +1,6 @@
 import socket, select, struct, time, base64, proxylib
 from proxylib import ProxyException
-import nameresolver, cache, httpmachine
+import nameresolver, cache, httpmachine, httpsmachine, dnsmachine
 
 class BaseTransferer:
 	def __init__(self, localsock, remoteaddr, buf, conf):
@@ -33,30 +33,39 @@ class BaseTransferer:
 			self.local.sendall(msg)
 		self.localbuf += bytearray(m.reqbuf)
 	def handle_tcp(self):
-		monitor = False
-		if 'httpaccept' in self.conf or 'httpexcept' in self.conf:
-			monitor = True
-			m = httpmachine.HTTPMachine(self.conf)
+		monitor = []
+		if 'httpaccept' in self.conf or 'httpexcept' in self.conf or 'httpdomainaccept' in self.conf or 'httpdomainexcept' in self.conf:
+			monitor.append(httpmachine.HTTPMachine(self.conf))
+		if 'httpsaccept' in self.conf or 'httpsexcept' in self.conf:
+			monitor.append(httpsmachine.HTTPSMachine(self.conf))
+		if 'dnsaccept' in self.conf or 'dnsexcept' in self.conf:
+			monitor.append(dnsmachine.DNSMachine(self.conf))
 		localmsg = str(self.localbuf)
 		remotemsg = str(self.remotebuf)
 		self.localbuf.__init__()
 		self.remotebuf.__init__()
 		while True:
 			if remotemsg:
-				if monitor:
-					try: m.read_resp(remotemsg)
-					except ValueError:
-						monitor = False
+				new_monitor = []
+				for m in monitor:
+					try:
+						m.read_resp(remotemsg)
+						new_monitor.append(m)
+					except ValueError: pass
+				monitor = new_monitor
 				self.local.sendall(remotemsg)
 				remotemsg = ''
 			if localmsg:
-				if monitor:
-					try: m.read_req(localmsg)
+				new_monitor = []
+				for m in monitor:
+					try:
+						m.read_req(localmsg)
+						new_monitor.append(m)
 					except ProxyException:
 						self.finish_http_req(m)
 						return -1
-					except ValueError:
-						monitor = False
+					except ValueError: pass
+				monitor = new_monitor
 				self.remote.sendall(localmsg)
 				localmsg = ''
 			r, w, e = select.select([self.local, self.remote], [], [])

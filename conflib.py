@@ -55,7 +55,7 @@ def getconf(conffile):
 						val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv4_match)
 					elif key in ['ipv6accept', 'ipv6except']:
 						val = filtered(filter(lambda x: x[0] != '#', val.split()), ipv6_match)
-					elif key in ['domainaccept', 'domainexcept']:
+					elif key in ['domainaccept', 'domainexcept', 'httpdomainaccept', 'httpdomainexcept', 'httpsaccept', 'httpsexcept', 'dnsaccept', 'dnsexcept']:
 						val = filtered(filter(lambda x: x[0] != '#', val.split()), domain_match)
 					elif key in ['httpaccept', 'httpexcept']:
 						val = http_filtered(filter(lambda x: x[0] != '#', val.split()))

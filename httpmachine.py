@@ -240,12 +240,19 @@ class HTTPMachine:
 		if self.requrl is None \
 				and self.request.state >= HTTPReqMachine.STATE_HEADER \
 				and 'host' in self.request.headerkeys:
-			val = self.request._header_getvalue('host').strip()
+			host = val = self.request._header_getvalue('host').strip()
+			port = '80'
+			if host.find(':') != -1:
+				host, port = host.split(':')
 			self.requrl = val + self.request.url
 			if 'httpaccept' in self.conf \
 						and not self.conf['httpaccept'](self.requrl) \
 					or 'httpexcept' in self.conf \
-						and self.conf['httpexcept'](self.requrl):
+						and self.conf['httpexcept'](self.requrl) \
+					or 'httpdomainaccept' in self.conf \
+						and not self.conf['httpdomainaccept'](host, int(port)) \
+					or 'httpdomainexcept' in self.conf \
+						and self.conf['httpdomainexcept'](host, int(port)):
 				self.reqbuf += s[num: ]
 				self.request.state = HTTPMachineBase.STATE_HEADER
 				raise ProxyException('HTTP filtered')
